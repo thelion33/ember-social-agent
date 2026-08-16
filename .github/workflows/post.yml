@@ -18,6 +18,10 @@ on:
         description: "Catch-up window in hours"
         type: string
         default: "3"
+      smoke:
+        description: "Run one noop instead of the calendar (proves the loop, spends nothing)"
+        type: boolean
+        default: false
 
 # Two runs must never both decide the same post is due. The execution log
 # dedupes by key as a second line of defence, but serialising the job stops the
@@ -70,6 +74,7 @@ jobs:
         run: |
           python -m ember_social.agent auto \
             --window "${{ inputs.window || '3' }}" \
+            ${{ inputs.smoke && '--smoke' || '' }} \
             ${{ inputs.dry_run && '--dry-run' || '' }} \
             ${{ inputs.publish && '--publish' || '' }}
 

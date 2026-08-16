@@ -549,7 +549,10 @@ def command_auto(args: argparse.Namespace) -> int:
     config = cfg.get_config()
 
     log = ExecutionLog.load()
-    due = selection.due_now(log=log, window_hours=args.window)
+    if args.smoke:
+        due = _smoke_entry(config.timezone, log)
+    else:
+        due = selection.due_now(log=log, window_hours=args.window)
 
     print("Ember social agent — auto")
     print("  timezone     {}".format(config.timezone))
@@ -607,6 +610,31 @@ def command_auto(args: argparse.Namespace) -> int:
         print("{} entr{} failed.".format(failures, "y" if failures == 1 else "ies"))
         return 1
     return 0
+
+
+def _smoke_entry(timezone_name: str, log) -> list:
+    """A synthetic noop due right now, for exercising the loop on a real runner.
+
+    Keyed to the current hour rather than the current minute, so running the
+    workflow twice in the same hour proves dedupe instead of posting twice.
+    """
+    from datetime import datetime
+
+    from .generators import selection
+
+    now = datetime.now(selection._zone(timezone_name)).replace(
+        minute=0, second=0, microsecond=0
+    )
+    entry = selection.DueEntry(
+        key=selection.make_key(now, "noop"),
+        post_type="noop",
+        scheduled_for=now,
+        source="smoke",
+    )
+    if log.has(entry.key):
+        print("Smoke entry {} already ran this hour.".format(entry.key))
+        return []
+    return [entry]
 
 
 def command_plan(args: argparse.Namespace) -> int:
@@ -784,6 +812,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="embrace",
         choices=["embrace", "charged"],
         help="scene explicitness ceiling",
+    )
+    auto.add_argument(
+        "--smoke",
+        action="store_true",
+        help="ignore the calendar and run one noop, to exercise the loop",
     )
     auto.set_defaults(func=command_auto)
 
