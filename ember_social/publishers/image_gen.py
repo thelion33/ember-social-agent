@@ -160,6 +160,102 @@ def _color_at(anatomy: Anatomy, pos: float) -> RGB:
     return bk.LEVEL_COLORS[anatomy.slices[-1].level.key]
 
 
+def _cover_crop(source: Path, width: int, height: int) -> Image.Image:
+    """Fill the frame without distortion, biased toward the upper third.
+
+    Generated scenes put the subject high and the light source higher, so a
+    centred crop tends to cut heads off.
+    """
+    with Image.open(source) as src:
+        src = src.convert("RGB")
+        ratio = max(width / src.width, height / src.height)
+        resized = src.resize(
+            (max(1, int(src.width * ratio)), max(1, int(src.height * ratio))),
+            Image.Resampling.LANCZOS,
+        )
+    left = max(0, (resized.width - width) // 2)
+    top = max(0, (resized.height - height) // 3)
+    return resized.crop((left, top, left + width, top + height))
+
+
+def _apply_scrim(canvas: Image.Image, start: float = 0.42, power: float = 1.4):
+    """Darken the lower portion so type stays legible over any scene."""
+    width, height = canvas.size
+    column = Image.new("L", (1, height), 0)
+    draw = ImageDraw.Draw(column)
+    for y in range(height):
+        pos = y / float(height)
+        if pos < start:
+            alpha = 0
+        else:
+            alpha = int(255 * min(1.0, ((pos - start) / (1.0 - start)) ** power))
+        draw.point((0, y), fill=alpha)
+    mask = column.resize((width, height))
+    shadow = Image.new("RGB", (width, height), bk.BACKGROUND)
+    return Image.composite(shadow, canvas, mask)
+
+
+def render_overheard(
+    scene_path: Path,
+    line: str,
+    out_path: Path,
+    attribution: Optional[str] = None,
+) -> Path:
+    """A generated scene with a single overheard line laid over it."""
+    scale = SUPERSAMPLE
+    width = bk.CANVAS_WIDTH * scale
+    height = bk.CANVAS_HEIGHT * scale
+    margin = bk.MARGIN * scale
+
+    canvas = _apply_scrim(_cover_crop(scene_path, width, height))
+    draw = ImageDraw.Draw(canvas)
+
+    # Long lines get a smaller face rather than a wrapped block that swallows
+    # the image.
+    for size in (82, 74, 66, 58):
+        quote_font = load_font(size * scale, bk.WEIGHT_BOLD, opsz=32)
+        lines = _wrap(draw, line, quote_font, width - 2 * margin)
+        if len(lines) <= 3:
+            break
+
+    line_height = int(size * 1.2 * scale)
+    baseline = height - margin - int(64 * scale)
+    y = baseline - line_height * len(lines)
+    for text in lines:
+        draw.text((margin, y), text, font=quote_font, fill=bk.TEXT_PRIMARY)
+        y += line_height
+
+    if attribution:
+        attribution_font = load_font(26 * scale, bk.WEIGHT_MEDIUM, opsz=16)
+        draw.text(
+            (margin, baseline + int(10 * scale)),
+            attribution,
+            font=attribution_font,
+            fill=bk.TEXT_SECONDARY,
+        )
+
+    mark_font = load_font(24 * scale, bk.WEIGHT_BOLD, opsz=16)
+    _draw_tracked_text(
+        draw,
+        (margin, height - margin - int(24 * scale)),
+        "EMBER",
+        mark_font,
+        bk.ACCENT,
+        tracking=4.0 * scale,
+    )
+
+    final = image_resize(canvas)
+    cfg.ensure_dir(out_path.parent)
+    final.save(out_path, format="PNG", optimize=True)
+    return out_path
+
+
+def image_resize(canvas: Image.Image) -> Image.Image:
+    return canvas.resize(
+        (bk.CANVAS_WIDTH, bk.CANVAS_HEIGHT), Image.Resampling.LANCZOS
+    )
+
+
 def _layout_level_labels(
     draw: ImageDraw.ImageDraw,
     anatomy: Anatomy,
@@ -176,7 +272,10 @@ def _layout_level_labels(
     drop to a second row instead of overlapping.
     """
     total = anatomy.total_seconds or 1
-    gap = int(18 * scale)
+    # Minimum breathing room between two labels before one is pushed to a
+    # second row. Kept small deliberately: staggering is a last resort that
+    # looks like a mistake, so only a real overlap should trigger it.
+    gap = int(12 * scale)
 
     labels: List[dict] = []
     elapsed = 0

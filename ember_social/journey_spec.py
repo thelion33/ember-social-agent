@@ -177,5 +177,5 @@ def curve_points(anatomy: Anatomy) -> List[Tuple[float, float]]:
         elapsed += slice_.seconds
 
     opening = (0.0, points[0][1] * 0.32)
-    closing = (1.0, points[-1][1] * 0.46)
+    closing = (1.0, points[-1][1] * 0.28)
     return [opening] + points + [closing]

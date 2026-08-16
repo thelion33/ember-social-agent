@@ -368,15 +368,19 @@ def command_preview(args: argparse.Namespace) -> int:
     from .journey_spec import anatomy_for
     from .publishers import image_gen
 
-    if args.post_type != "journey_anatomy":
+    if args.post_type not in ("journey_anatomy", "overheard"):
         print(
-            "Unknown post type {!r}. Available right now: journey_anatomy".format(
+            "Unknown post type {!r}. Available: overheard, journey_anatomy".format(
                 args.post_type
             )
         )
         return 2
 
     cfg.load_dotenv_if_present()
+
+    if args.post_type == "overheard":
+        return _preview_overheard(args)
+
     anatomy = anatomy_for(args.duration)
 
     if args.offline:
@@ -426,6 +430,78 @@ def command_preview(args: argparse.Namespace) -> int:
     for line in copy.x_caption.splitlines():
         print("    {}".format(line))
     print("")
+    print("Nothing was published.")
+    return 0
+
+
+def _preview_overheard(args: argparse.Namespace) -> int:
+    import json
+    from datetime import datetime
+
+    from . import scenes as scene_lib
+    from .generators import content as content_gen
+    from .publishers import image_gen, scene_gen
+
+    tier = args.tier
+    print("Generating scene ({} tier)…".format(tier))
+    generated = scene_gen.generate_scene(tier=tier, seed=args.seed)
+
+    for refusal in generated.refusals:
+        print("  moderation: {}".format(refusal))
+    if generated.was_downgraded:
+        print(
+            "  tier stepped down from {} to {}".format(
+                generated.requested_tier, generated.scene.tier
+            )
+        )
+
+    scene = generated.scene
+    print("Writing the line…")
+    copy = content_gen.generate_overheard(
+        scene_description=scene.prompt(), tier=scene.tier
+    )
+
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    out_dir = cfg.ensure_dir(cfg.OUTPUT_DIR)
+    image_path = out_dir / "{}-overheard-{}.png".format(stamp, scene.key)
+    meta_path = out_dir / "{}-overheard-{}.json".format(stamp, scene.key)
+
+    image_gen.render_overheard(
+        scene_path=generated.path,
+        line=copy.line,
+        out_path=image_path,
+        attribution=copy.attribution if args.attribution else None,
+    )
+
+    meta = copy.as_dict()
+    meta["post_type"] = "overheard"
+    meta["scene"] = scene.as_dict()
+    meta["scene_prompt"] = scene.prompt()
+    meta["image_model"] = generated.model
+    meta["refusals"] = generated.refusals
+    meta_path.write_text(json.dumps(meta, indent=2))
+
+    print("")
+    print("  image     {}".format(image_path))
+    print("  scene     {}".format(generated.path))
+    print("  metadata  {}".format(meta_path))
+    print("")
+    print("  line      {}".format(copy.line))
+    print("  said by   {}".format(copy.attribution))
+    print("")
+    print("  instagram ({} chars)".format(len(copy.instagram_caption)))
+    for line in copy.instagram_caption.splitlines():
+        print("    {}".format(line))
+    print("")
+    print("  x ({} chars)".format(len(copy.x_caption)))
+    for line in copy.x_caption.splitlines():
+        print("    {}".format(line))
+    print("")
+    print(
+        "  combinations available at this tier: {}".format(
+            scene_lib.combination_count(scene.tier)
+        )
+    )
     print("Nothing was published.")
     return 0
 
@@ -494,6 +570,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--offline",
         action="store_true",
         help="skip the model call and use placeholder copy",
+    )
+    preview.add_argument(
+        "--tier",
+        default="embrace",
+        choices=["embrace", "charged"],
+        help="scene explicitness; embrace is the Instagram ceiling",
+    )
+    preview.add_argument(
+        "--seed", type=int, default=None, help="reproduce a specific scene"
+    )
+    preview.add_argument(
+        "--attribution",
+        action="store_true",
+        help="print the speaker and time under the line",
     )
     preview.set_defaults(func=command_preview)
 

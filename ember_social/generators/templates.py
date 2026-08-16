@@ -150,6 +150,89 @@ long. Lead with that idea, in your own words.""".format(
     return system, user
 
 
+OVERHEARD_SCHEMA = {
+    "line": "<= 58 chars, the overheard line laid over the image",
+    "attribution": "<= 34 chars, who said it and when, e.g. 'her, 1:14am'",
+    "instagram_caption": "the Instagram caption",
+    "x_caption": "the X caption",
+    "alt_text": "<= 200 chars, plain description of the image for screen readers",
+}
+
+
+def overheard_prompt(scene_description: str, tier: str) -> Tuple[str, str]:
+    """Returns (system_prompt, user_prompt) for the Overheard post."""
+
+    system = """You write for Ember, an iOS app that generates a guided intimacy journey for
+a couple from their own inputs.
+
+{voice}
+{networks}
+
+POST TYPE: Overheard
+A single line of dialogue laid over a dark, backlit silhouette of a couple. The
+line is something one partner actually said to the other — after, or during, or
+in the doorway on the way there.
+
+WHAT MAKES THE LINE WORK
+- It is said BY one partner TO the other. Never to the reader, never about a
+  product.
+- It implies everything and states nothing. The reader fills in what happened.
+- It sounds spoken, not written. Contractions, fragments, and interruptions are
+  good. Perfect grammar is not the point.
+- Specific beats generic: a detail about time, a body, a piece of furniture, or
+  something one of them said earlier.
+- It can be funny, stunned, smug, wrecked, or tender. It must not be corny.
+
+HARD RULES
+- The line NEVER mentions Ember, an app, a product, or a review. A line like
+  "I love this app" is a fabricated endorsement and is forbidden.
+- No quotation marks in the line itself; it is set as display type.
+- The line must work with no context whatsoever.
+
+Good examples of the register:
+- I didn't know you had it in you.
+- You're going to have to give me a minute.
+- We are not telling anyone about the chair.
+- Do that again and I'm calling out tomorrow.
+- I forgot the neighbours exist.
+
+Return ONLY a JSON object with exactly these keys:
+{schema}
+""".format(
+        voice=_voice_block(),
+        networks=_network_block(),
+        schema="\n".join(
+            '  "{}": {}'.format(key, value) for key, value in OVERHEARD_SCHEMA.items()
+        ),
+    )
+
+    tier_note = {
+        "embrace": (
+            "The image is a close embrace — contact and tension, nothing "
+            "depicted. The line should carry the heat that the image withholds."
+        ),
+        "charged": (
+            "The image is more explicit in silhouette. The line can be blunter, "
+            "but it still implies rather than describes."
+        ),
+    }.get(tier, "")
+
+    user = """The image this line sits on:
+
+{scene}
+
+{tier_note}
+
+Write the line and the two captions. The line is the whole post — spend your
+effort there. The captions extend the moment; they do not explain the image and
+they never describe the app.""".format(
+        scene=scene_description, tier_note=tier_note
+    )
+
+    return system, user
+
+
 PROMPT_BUILDERS: Dict[str, object] = {
     "journey_anatomy": journey_anatomy_prompt,
+    "overheard": overheard_prompt,
 }
