@@ -763,6 +763,11 @@ def command_refresh_token(args: argparse.Namespace) -> int:
                 "  NOT persisted. The new token exists but nothing stored it, "
                 "so the next run still uses the old one. Re-run with --persist."
             )
+        # Without this the local .env keeps the previous token and drifts out
+        # of step with CI, which only shows up as a confusing local failure
+        # weeks later.
+        if outcome.new_token and token_refresh.update_dotenv(outcome.new_token):
+            print("  .env updated to match")
     return 0
 
 

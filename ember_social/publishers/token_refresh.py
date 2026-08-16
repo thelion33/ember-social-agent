@@ -34,6 +34,30 @@ class RefreshOutcome:
     expires_in_days: Optional[float] = None
     persisted_to: Optional[str] = None
     detail: str = ""
+    new_token: Optional[str] = None
+
+
+def update_dotenv(token: str, path: Optional[str] = None) -> bool:
+    """Keep the local .env in step with what CI now holds.
+
+    Returns False when there is no .env, which is the normal case on a runner.
+    """
+    import re
+    from pathlib import Path
+
+    dotenv = Path(path) if path else (cfg.REPO_ROOT / ".env")
+    if not dotenv.exists():
+        return False
+
+    text = dotenv.read_text()
+    pattern = r"(?m)^{}=.*$".format(SECRET_NAME)
+    replacement = "{}={}".format(SECRET_NAME, token)
+    if re.search(pattern, text):
+        text = re.sub(pattern, replacement, text)
+    else:
+        text = text.rstrip("\n") + "\n" + replacement + "\n"
+    dotenv.write_text(text)
+    return True
 
 
 def _refresh_instagram_login(token: str) -> dict:
@@ -126,4 +150,5 @@ def refresh_if_due(
         expires_in_days=expires_days,
         persisted_to=persisted,
         detail="new token valid for {:.0f} days".format(expires_days),
+        new_token=new_token,
     )

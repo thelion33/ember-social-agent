@@ -50,7 +50,7 @@ jobs:
       X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
       X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
       INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
-      INSTAGRAM_USER_ID: ${{ secrets.INSTAGRAM_USER_ID }}
+      INSTAGRAM_USER_ID: ${{ vars.INSTAGRAM_USER_ID }}
       # GitHub rejects secret names beginning with GITHUB_, so the image
       # hosting token is stored as GH_ASSETS_TOKEN and mapped here.
       GITHUB_TOKEN: ${{ secrets.GH_ASSETS_TOKEN }}
@@ -73,13 +73,25 @@ jobs:
         continue-on-error: true
         run: python -m ember_social.agent verify
 
+      - name: Refresh the Instagram token if due
+        # Non-fatal: an expired token stops posting, but a failed refresh
+        # should not also stop a token that is still valid today from posting.
+        continue-on-error: true
+        env:
+          # gh secret set needs a PAT with admin rights on the repo; the
+          # built-in GITHUB_TOKEN cannot write secrets.
+          GH_TOKEN: ${{ secrets.GH_ASSETS_TOKEN }}
+        run: python -m ember_social.agent refresh-token --persist
+
       - name: Run the agent
         run: |
+          # Scheduled runs publish. Manual runs only publish when asked, so
+          # workflow_dispatch stays usable for smoke tests and dry runs.
           python -m ember_social.agent auto \
             --window "${{ inputs.window || '3' }}" \
             ${{ inputs.smoke && '--smoke' || '' }} \
             ${{ inputs.dry_run && '--dry-run' || '' }} \
-            ${{ inputs.publish && '--publish' || '' }}
+            ${{ (github.event_name == 'schedule' || inputs.publish) && '--publish' || '' }}
 
       - name: Commit state
         # Runs even when the agent failed partway: whatever did post must be
