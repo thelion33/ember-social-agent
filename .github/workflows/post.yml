@@ -1,0 +1,100 @@
+name: post
+
+on:
+  schedule:
+    # Hourly. The agent decides what is actually due — cron only wakes it up.
+    - cron: "7 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Show what is due and stop"
+        type: boolean
+        default: false
+      publish:
+        description: "Actually publish (leave off for smoke tests)"
+        type: boolean
+        default: false
+      window:
+        description: "Catch-up window in hours"
+        type: string
+        default: "3"
+
+# Two runs must never both decide the same post is due. The execution log
+# dedupes by key as a second line of defence, but serialising the job stops the
+# race before it starts.
+concurrency:
+  group: ember-social-post
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+      X_API_KEY: ${{ secrets.X_API_KEY }}
+      X_API_SECRET: ${{ secrets.X_API_SECRET }}
+      X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+      X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+      X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
+      INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+      INSTAGRAM_USER_ID: ${{ secrets.INSTAGRAM_USER_ID }}
+      # GitHub rejects secret names beginning with GITHUB_, so the image
+      # hosting token is stored as GH_ASSETS_TOKEN and mapped here.
+      GITHUB_TOKEN: ${{ secrets.GH_ASSETS_TOKEN }}
+      GH_ASSETS_REPO: ${{ vars.GH_ASSETS_REPO }}
+      GH_ASSETS_TAG: ${{ vars.GH_ASSETS_TAG }}
+      TIMEZONE: ${{ vars.TIMEZONE }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify credentials
+        continue-on-error: true
+        run: python -m ember_social.agent verify
+
+      - name: Run the agent
+        run: |
+          python -m ember_social.agent auto \
+            --window "${{ inputs.window || '3' }}" \
+            ${{ inputs.dry_run && '--dry-run' || '' }} \
+            ${{ inputs.publish && '--publish' || '' }}
+
+      - name: Commit state
+        # Runs even when the agent failed partway: whatever did post must be
+        # recorded, or the next hourly run posts it again.
+        if: always()
+        run: |
+          if [ -z "$(git status --porcelain state/)" ]; then
+            echo "No state changes to commit."
+            exit 0
+          fi
+          git config user.name  "ember-social-agent"
+          git config user.email "actions@users.noreply.github.com"
+          git add state/
+          git commit -m "Record posting run $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          # Another run may have pushed while this one was generating.
+          git pull --rebase --autostash
+          git push
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-${{ github.run_id }}
+          path: out/
+          retention-days: 7
+          if-no-files-found: ignore

@@ -538,6 +538,204 @@ def _offline_copy(anatomy):
     )
 
 
+def command_auto(args: argparse.Namespace) -> int:
+    """What the scheduler calls. Runs whatever the calendar says is due."""
+    from datetime import datetime
+
+    from .generators import selection
+    from .state import ExecutionLog, TokenState
+
+    cfg.load_dotenv_if_present()
+    config = cfg.get_config()
+
+    log = ExecutionLog.load()
+    due = selection.due_now(log=log, window_hours=args.window)
+
+    print("Ember social agent — auto")
+    print("  timezone     {}".format(config.timezone))
+    print("  window       last {}h".format(args.window))
+    print("  log          {} previous post(s)".format(len(log.entries)))
+    print("  publishing   {}".format("ENABLED" if args.publish else "disabled (dry)"))
+    print("")
+
+    _report_token_age(TokenState.load())
+
+    if not due:
+        print("Nothing due. Exiting cleanly.")
+        return 0
+
+    print("{} entr{} due:".format(len(due), "y" if len(due) == 1 else "ies"))
+    for entry in due:
+        print(
+            "  {}  {:<16} {:<9} {}".format(
+                entry.scheduled_for.strftime("%Y-%m-%d %H:%M"),
+                entry.post_type,
+                entry.source,
+                entry.key,
+            )
+        )
+    print("")
+
+    if args.dry_run:
+        print("Dry run — nothing generated, nothing recorded.")
+        return 0
+
+    failures = 0
+    for entry in due:
+        print("--- {} ---".format(entry.key))
+        try:
+            result = _run_entry(entry, args, log)
+        except Exception as exc:  # noqa: BLE001
+            failures += 1
+            print("  FAILED: {}".format(exc))
+            continue
+        log.record(
+            key=entry.key,
+            post_type=entry.post_type,
+            networks=result.get("networks", {}),
+            scene_key=result.get("scene_key"),
+            note=result.get("note"),
+        )
+        print("  recorded")
+
+    log.prune()
+    log.save()
+    print("")
+    print("Execution log written to {}".format(log.path))
+
+    if failures:
+        print("{} entr{} failed.".format(failures, "y" if failures == 1 else "ies"))
+        return 1
+    return 0
+
+
+def command_plan(args: argparse.Namespace) -> int:
+    """Show what the calendar will do next, and whether it is about to run out."""
+    from datetime import date, datetime, timedelta
+
+    from . import posting_plan
+    from .generators import selection
+    from .state import ExecutionLog
+
+    cfg.load_dotenv_if_present()
+    config = cfg.get_config()
+    tz = selection._zone(config.timezone)
+    today = datetime.now(tz).date()
+    log = ExecutionLog.load()
+    posted = log.keys()
+
+    print("Posting plan ({}), next {} days".format(config.timezone, args.days))
+    print("")
+    for offset in range(args.days):
+        on_date = today + timedelta(days=offset)
+        entries = selection.candidates_for_date(
+            on_date, tz, posting_plan.PLAN, posting_plan.RECURRING
+        )
+        for entry in entries:
+            print(
+                "  {}  {:<10} {:<9} {}".format(
+                    entry.scheduled_for.strftime("%a %Y-%m-%d %H:%M"),
+                    entry.post_type,
+                    entry.source,
+                    "posted" if entry.key in posted else "",
+                )
+            )
+
+    print("")
+    dated = [item["date"] for item in posting_plan.PLAN]
+    if dated:
+        last = date.fromisoformat(max(dated))
+        remaining = (last - today).days
+        print(
+            "  dated calendar runs to {} ({} days left)".format(
+                last.isoformat(), remaining
+            )
+        )
+        if remaining < 30:
+            print(
+                "  regenerate soon: python tools/build_posting_plan.py --weeks 26"
+            )
+    else:
+        print("  dated calendar is empty")
+    print(
+        "  recurring floor: {} rule(s), no end date".format(
+            len(posting_plan.RECURRING)
+        )
+    )
+    return 0
+
+
+def _report_token_age(token_state) -> None:
+    days = token_state.days_since_refresh("instagram")
+    if days is None:
+        print(
+            "  token        Instagram token age unknown — refresh and record it "
+            "before the {}-day expiry bites".format(cfg.TOKEN_LIFETIME_DAYS)
+        )
+    elif token_state.needs_refresh("instagram"):
+        print(
+            "  token        Instagram token last refreshed {:.0f} days ago — due "
+            "for refresh at {} days".format(days, cfg.TOKEN_REFRESH_AFTER_DAYS)
+        )
+    else:
+        print("  token        Instagram token refreshed {:.0f} days ago".format(days))
+    print("")
+
+
+def _run_entry(entry, args: argparse.Namespace, log) -> dict:
+    """Execute one calendar entry. Returns metadata for the execution log."""
+    if entry.post_type == "noop":
+        # Exercises scheduling, dedupe, and the state commit without touching
+        # a real account or spending a cent.
+        print("  noop: no image, no model call, no publish")
+        return {"note": "noop smoke test", "networks": {}}
+
+    if entry.post_type == "overheard":
+        return _run_overheard(args, log)
+
+    raise ValueError("no handler for post type {!r}".format(entry.post_type))
+
+
+def _run_overheard(args: argparse.Namespace, log) -> dict:
+    from .generators import content as content_gen
+    from .publishers import image_gen, scene_gen
+
+    generated = scene_gen.generate_scene(
+        tier=args.tier, exclude_keys=sorted(log.scene_keys())
+    )
+    for refusal in generated.refusals:
+        print("  moderation: {}".format(refusal))
+
+    scene = generated.scene
+    copy = content_gen.generate_overheard(
+        scene_description=scene.prompt(), tier=scene.tier
+    )
+    print("  line (ig) {}".format(copy.line))
+    print("  line (x)  {}".format(copy.line_explicit))
+
+    out_dir = cfg.ensure_dir(cfg.OUTPUT_DIR)
+    rendered = {}
+    for network in ("instagram", "x"):
+        path = out_dir / "{}-{}.png".format(scene.key, network)
+        image_gen.render_overheard(
+            scene_path=generated.path, line=copy.line_for(network), out_path=path
+        )
+        rendered[network] = str(path)
+
+    if not args.publish:
+        print("  generated but NOT published (pass --publish to go live)")
+        return {
+            "scene_key": scene.key,
+            "note": "dry run",
+            "networks": {"generated": rendered},
+        }
+
+    raise NotImplementedError(
+        "publishing is not wired up yet — Instagram and X publishers arrive "
+        "with the credentials"
+    )
+
+
 def _not_yet(step: str) -> Callable[[argparse.Namespace], int]:
     def run(args: argparse.Namespace) -> int:
         print("Not implemented yet — arrives in build step {}.".format(step))
@@ -563,7 +761,35 @@ def build_parser() -> argparse.ArgumentParser:
     verify.set_defaults(func=command_verify)
 
     auto = subparsers.add_parser("auto", help="run whatever the calendar says is due")
-    auto.set_defaults(func=_not_yet("5"))
+    auto.add_argument(
+        "--window",
+        type=int,
+        default=cfg.CATCHUP_WINDOW_HOURS,
+        help="catch-up window in hours (default: {})".format(
+            cfg.CATCHUP_WINDOW_HOURS
+        ),
+    )
+    auto.add_argument(
+        "--publish",
+        action="store_true",
+        help="actually publish. Without this, posts are generated but not sent.",
+    )
+    auto.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="show what is due and stop; generates nothing, records nothing",
+    )
+    auto.add_argument(
+        "--tier",
+        default="embrace",
+        choices=["embrace", "charged"],
+        help="scene explicitness ceiling",
+    )
+    auto.set_defaults(func=command_auto)
+
+    plan = subparsers.add_parser("plan", help="show upcoming scheduled posts")
+    plan.add_argument("--days", type=int, default=14, help="how far ahead to look")
+    plan.set_defaults(func=command_plan)
 
     preview = subparsers.add_parser(
         "preview", help="generate a post to a local file without publishing"
