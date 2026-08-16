@@ -25,8 +25,47 @@ any credential existed.
 | --- | --- |
 | `verify` | Checks every credential, probes each API, prints what is configured. Exits non-zero if anything required is missing. |
 | `verify --no-network` | Presence checks only, no API calls. |
-| `auto` | What the scheduler calls. Posts whatever the calendar says is due. |
+| `auto` | What the scheduler calls. Runs whatever the calendar says is due. Generates but does **not** publish unless given `--publish`. |
+| `auto --dry-run` | Lists what is due and stops. Generates nothing, records nothing. |
+| `auto --smoke` | Runs a single `noop` instead of consulting the calendar, to exercise scheduling, dedupe, and the state commit without spending anything. |
+| `plan --days 14` | Shows upcoming scheduled posts and warns when the dated calendar is running out. |
 | `preview TYPE` | Generates a post to a local file without publishing. |
+
+## Scheduling
+
+`.github/workflows/post.yml` runs hourly. Cron only wakes the agent up; the
+agent decides what is actually due.
+
+- **Cron is late.** Nothing matches on the current hour. Anything scheduled
+  within the last `--window` hours (default 3) that has not run yet is due.
+- **Runs can overlap.** A `concurrency` group serialises the workflow, and
+  every calendar entry gets a key like `2026-08-18|20:00|overheard` that
+  excludes the run time, so two runs derive the same key and the second
+  no-ops.
+- **The calendar expires.** `PLAN` in `posting_plan.py` is generated and dated.
+  `RECURRING` has no end date and acts as a floor whenever `PLAN` has nothing
+  for the day, so an expired calendar means a quieter account, not a silent
+  one.
+
+Extend the dated calendar with one command:
+
+```bash
+python tools/build_posting_plan.py --weeks 26
+```
+
+## State
+
+The runner keeps no disk between jobs, so `state/` is committed back to the
+repository on every run.
+
+| File | Holds |
+| --- | --- |
+| `state/execution_log.json` | Which entry keys have posted, and the scene keys already used so imagery never repeats. |
+| `state/token_state.json` | When the Instagram token was last refreshed. A timestamp — never a token. |
+
+This repository is public, so every write is screened against
+credential-shaped patterns first and raises `CredentialLeak` before touching
+disk rather than after.
 
 ## Credentials
 
