@@ -233,6 +233,56 @@ def _generate_openai(prompt: str, model: str) -> bytes:
     return requests.get(payload.url, timeout=90).content
 
 
+def _sidecar_path(image_path: Path) -> Path:
+    return image_path.with_suffix(".json")
+
+
+def _write_sidecar(
+    image_path: Path, scene: scene_lib.Scene, provider: str, model: str
+) -> None:
+    import json
+
+    payload = dict(scene.as_dict())
+    payload["prompt"] = scene.prompt()
+    payload["provider"] = provider
+    payload["model"] = model
+    _sidecar_path(image_path).write_text(json.dumps(payload, indent=2))
+
+
+def load_scene(key: str, out_dir: Optional[Path] = None) -> GeneratedScene:
+    """Reload a previously generated scene by key, without regenerating it."""
+    import json
+
+    out_dir = out_dir or (cfg.OUTPUT_DIR / "scenes")
+    image_path = out_dir / "{}.png".format(key)
+    sidecar = _sidecar_path(image_path)
+    if not image_path.exists():
+        raise SceneUnavailable("no scene image at {}".format(image_path))
+    if not sidecar.exists():
+        raise SceneUnavailable(
+            "no sidecar at {} — the scene predates sidecars, so regenerate "
+            "it".format(sidecar)
+        )
+
+    data = json.loads(sidecar.read_text())
+    scene = scene_lib.Scene(
+        setting=data["setting"],
+        light=data["light"],
+        framing=data["framing"],
+        wardrobe=data["wardrobe"],
+        pose=data["pose"],
+        tier=data["tier"],
+    )
+    return GeneratedScene(
+        scene=scene,
+        path=image_path,
+        model=data.get("model", "unknown"),
+        provider=data.get("provider", "unknown"),
+        requested_tier=scene.tier,
+        refusals=[],
+    )
+
+
 def _provider_chain(
     provider: str, tier: str
 ) -> List[Tuple[str, str, Callable[[str, str], bytes]]]:
@@ -330,6 +380,9 @@ def generate_scene(
 
                 path = out_dir / "{}.png".format(scene.key)
                 path.write_bytes(data)
+                # Sidecar so a scene can be reused later — rewriting the line
+                # should not cost another image generation.
+                _write_sidecar(path, scene, provider_name, model)
                 return GeneratedScene(
                     scene=scene,
                     path=path,

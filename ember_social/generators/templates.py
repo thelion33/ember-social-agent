@@ -173,14 +173,27 @@ Lines in the right register:
 - Eight years in, and you still know that spot.
 - I haven't started anything since the twins.
 - Don't laugh, but I actually shaved for you.
-- Same bed, same bills, and I still want you.
+- The alarm is set for six. I do not care.
 - I thought that part of me was gone.
 
 Lines in the wrong register (too written, too vague, too pleased with
 themselves):
 - Some sentences do not need volume.
 - Tonight, we rewrote the rules of desire.
-- Let the embers speak for themselves."""
+- Let the embers speak for themselves.
+
+THE DETAIL HAS TO BE SAYABLE.
+The specific detail must be something a person would actually say out loud in
+the moment. Reach for what is in the room or the next hour — the alarm, the
+sitter, the kids down the hall, the time on the clock, how long it has been.
+
+Do not reach for the abstract machinery of adult life. Naming a financial or
+administrative product is the most common way this goes wrong: it sounds
+written, and nobody says it in bed.
+- Wrong: We just acted like people without a mortgage.
+- Wrong: That was worth every dollar of the sitter's hourly rate.
+- Right: The alarm is set for six. I do not care.
+- Right: The sitter leaves at midnight. Don't waste it."""
 
 
 def overheard_prompt(scene_description: str, tier: str) -> Tuple[str, str]:

@@ -527,8 +527,13 @@ def _preview_overheard(args: argparse.Namespace) -> int:
     from .publishers import image_gen, scene_gen
 
     tier = args.tier
-    print("Generating scene ({} tier)…".format(tier))
-    generated = scene_gen.generate_scene(tier=tier, seed=args.seed)
+    if getattr(args, "scene", None):
+        print("Reusing scene {}…".format(args.scene))
+        generated = scene_gen.load_scene(args.scene)
+        tier = generated.scene.tier
+    else:
+        print("Generating scene ({} tier)…".format(tier))
+        generated = scene_gen.generate_scene(tier=tier, seed=args.seed)
 
     for refusal in generated.refusals:
         print("  moderation: {}".format(refusal))
@@ -1042,6 +1047,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     preview.add_argument(
         "--seed", type=int, default=None, help="reproduce a specific scene"
+    )
+    preview.add_argument(
+        "--scene",
+        default=None,
+        help="reuse an already generated scene by key, rewriting only the "
+        "copy. Cheaper than regenerating the image to change the words.",
     )
     preview.add_argument(
         "--attribution",
