@@ -1,5 +1,7 @@
 import os
+import subprocess
 import sys
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -81,9 +83,35 @@ class EnvironmentReads(unittest.TestCase):
 class ImportIsSideEffectFree(unittest.TestCase):
     """A stray mkdir at import time crashes the runner on an unrelated import."""
 
-    def test_importing_config_creates_no_directories(self):
-        self.assertFalse(cfg.OUTPUT_DIR.exists(), "out/ was created at import time")
-        self.assertFalse(cfg.STATE_DIR.exists(), "state/ was created at import time")
+    def test_importing_every_module_creates_nothing_on_disk(self):
+        repo_root = Path(__file__).resolve().parent.parent
+        script = textwrap.dedent(
+            """
+            import pkgutil, sys
+            from pathlib import Path
+            root = Path(sys.argv[1])
+            before = {p.name for p in root.iterdir()}
+            sys.path.insert(0, str(root))
+            import ember_social
+            for module in pkgutil.walk_packages(
+                ember_social.__path__, "ember_social."
+            ):
+                __import__(module.name)
+            after = {p.name for p in root.iterdir()}
+            created = sorted(after - before)
+            print(",".join(created))
+            """
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script, str(repo_root)],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        created = [name for name in result.stdout.strip().split(",") if name]
+        self.assertEqual(
+            created, [], "importing the package created: {}".format(created)
+        )
 
 
 class BundledFont(unittest.TestCase):

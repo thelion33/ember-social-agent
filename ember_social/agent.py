@@ -361,6 +361,99 @@ def command_verify(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_preview(args: argparse.Namespace) -> int:
+    """Generate a post to a local file. Never touches a social network."""
+    from datetime import datetime
+
+    from .journey_spec import anatomy_for
+    from .publishers import image_gen
+
+    if args.post_type != "journey_anatomy":
+        print(
+            "Unknown post type {!r}. Available right now: journey_anatomy".format(
+                args.post_type
+            )
+        )
+        return 2
+
+    cfg.load_dotenv_if_present()
+    anatomy = anatomy_for(args.duration)
+
+    if args.offline:
+        copy = _offline_copy(anatomy)
+    else:
+        from .generators import content as content_gen
+
+        print("Generating copy…")
+        copy = content_gen.generate_journey_anatomy(anatomy)
+
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    slug = anatomy.duration_label.replace(" ", "")
+    out_dir = cfg.ensure_dir(cfg.OUTPUT_DIR)
+    image_path = out_dir / "{}-{}-{}.png".format(stamp, args.post_type, slug)
+    meta_path = out_dir / "{}-{}-{}.json".format(stamp, args.post_type, slug)
+
+    image_gen.render_journey_anatomy(
+        anatomy=anatomy,
+        eyebrow=copy.eyebrow,
+        headline=copy.headline,
+        deck=copy.deck,
+        footnote=copy.footnote,
+        out_path=image_path,
+    )
+
+    import json
+
+    meta = copy.as_dict()
+    meta["post_type"] = args.post_type
+    meta["duration"] = anatomy.duration_label
+    meta["total_cards"] = anatomy.total_cards
+    meta_path.write_text(json.dumps(meta, indent=2))
+
+    print("")
+    print("  image     {}".format(image_path))
+    print("  metadata  {}".format(meta_path))
+    print("")
+    print("  headline  {}".format(copy.headline))
+    print("  deck      {}".format(copy.deck))
+    print("  footnote  {}".format(copy.footnote))
+    print("")
+    print("  instagram ({} chars)".format(len(copy.instagram_caption)))
+    for line in copy.instagram_caption.splitlines():
+        print("    {}".format(line))
+    print("")
+    print("  x ({} chars)".format(len(copy.x_caption)))
+    for line in copy.x_caption.splitlines():
+        print("    {}".format(line))
+    print("")
+    print("Nothing was published.")
+    return 0
+
+
+def _offline_copy(anatomy):
+    """Deterministic stand-in copy so the renderer can be worked on offline."""
+    from .generators.content import PostCopy
+
+    dominant = anatomy.dominant
+    return PostCopy(
+        eyebrow="Anatomy of a journey",
+        headline="A {} session is not five equal blocks".format(anatomy.duration_label),
+        deck=(
+            "The build is quick. The middle is long. {} alone takes {:.0f} of the "
+            "{:.0f} minutes.".format(
+                dominant.level.name, dominant.minutes, anatomy.total_minutes
+            )
+        ),
+        footnote="{} cards across five levels, timed from the app's own pacing rules.".format(
+            anatomy.total_cards
+        ),
+        instagram_caption="(offline preview — no caption generated)",
+        x_caption="(offline preview — no caption generated)",
+        alt_text="Chart of intensity over time across five levels.",
+        model="offline",
+    )
+
+
 def _not_yet(step: str) -> Callable[[argparse.Namespace], int]:
     def run(args: argparse.Namespace) -> int:
         print("Not implemented yet — arrives in build step {}.".format(step))
@@ -392,7 +485,17 @@ def build_parser() -> argparse.ArgumentParser:
         "preview", help="generate a post to a local file without publishing"
     )
     preview.add_argument("post_type", help="which post type to render")
-    preview.set_defaults(func=_not_yet("2"))
+    preview.add_argument(
+        "--duration",
+        default="30 min",
+        help="session length to describe (default: 30 min)",
+    )
+    preview.add_argument(
+        "--offline",
+        action="store_true",
+        help="skip the model call and use placeholder copy",
+    )
+    preview.set_defaults(func=command_preview)
 
     return parser
 
