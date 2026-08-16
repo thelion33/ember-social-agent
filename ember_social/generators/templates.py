@@ -151,12 +151,36 @@ long. Lead with that idea, in your own words.""".format(
 
 
 OVERHEARD_SCHEMA = {
-    "line": "<= 58 chars, the overheard line laid over the image",
+    "line": "<= 58 chars, the Instagram line. Blunt but clean.",
+    "line_explicit": "<= 58 chars, the X line. Same moment, no euphemism.",
     "attribution": "<= 34 chars, who said it and when, e.g. 'her, 1:14am'",
     "instagram_caption": "the Instagram caption",
     "x_caption": "the X caption",
     "alt_text": "<= 200 chars, plain description of the image for screen readers",
 }
+
+# The specificity of long-term-couple detail is what makes a line land. Vague
+# sensuality reads as advertising; a named year or a sleeping kid does not.
+REGISTER_GUIDE = """REGISTER — the most important instruction here.
+These must sound like real long-term couples, not advertising copy. Draw on the
+unglamorous specifics of a long relationship: the years, the routine, the kids
+asleep down the hall, the bills, the version of yourself you had written off.
+Blunt beats poetic. Concrete beats atmospheric. Contractions and fragments are
+good. Nothing breathy, nothing literary, nothing that sounds written.
+
+Lines in the right register:
+- The kids are asleep. Don't make me be sensible.
+- Eight years in, and you still know that spot.
+- I haven't started anything since the twins.
+- Don't laugh, but I actually shaved for you.
+- Same bed, same bills, and I still want you.
+- I thought that part of me was gone.
+
+Lines in the wrong register (too written, too vague, too pleased with
+themselves):
+- Some sentences do not need volume.
+- Tonight, we rewrote the rules of desire.
+- Let the embers speak for themselves."""
 
 
 def overheard_prompt(scene_description: str, tier: str) -> Tuple[str, str]:
@@ -176,31 +200,35 @@ in the doorway on the way there.
 WHAT MAKES THE LINE WORK
 - It is said BY one partner TO the other. Never to the reader, never about a
   product.
-- It implies everything and states nothing. The reader fills in what happened.
-- It sounds spoken, not written. Contractions, fragments, and interruptions are
-  good. Perfect grammar is not the point.
-- Specific beats generic: a detail about time, a body, a piece of furniture, or
-  something one of them said earlier.
+- It names a real situation. The reader recognises themselves in it.
 - It can be funny, stunned, smug, wrecked, or tender. It must not be corny.
 
-HARD RULES
-- The line NEVER mentions Ember, an app, a product, or a review. A line like
-  "I love this app" is a fabricated endorsement and is forbidden.
-- No quotation marks in the line itself; it is set as display type.
-- The line must work with no context whatsoever.
+{register}
 
-Good examples of the register:
-- I didn't know you had it in you.
-- You're going to have to give me a minute.
-- We are not telling anyone about the chair.
-- Do that again and I'm calling out tomorrow.
-- I forgot the neighbours exist.
+TWO LINES, ONE MOMENT
+You write the same moment twice, for two networks with different rules.
+
+"line" goes on the Instagram image. Blunt and specific, but it must survive
+Meta's adult content policy, which covers explicit sexual LANGUAGE as well as
+imagery. Say the situation, not the act. These words must not appear: {forbidden}
+
+"line_explicit" goes on the X image. Same moment, same voice, no euphemism and
+no hedging. This is the version you would actually say out loud. Do not simply
+copy the Instagram line — if the two are identical you have not done the job.
+
+HARD RULES FOR BOTH
+- Never mentions Ember, an app, a product, or a review. A line like "I love
+  this app" is a fabricated endorsement and is forbidden.
+- No quotation marks; the line is set as display type.
+- Works with no context whatsoever.
 
 Return ONLY a JSON object with exactly these keys:
 {schema}
 """.format(
         voice=_voice_block(),
         networks=_network_block(),
+        register=REGISTER_GUIDE,
+        forbidden=", ".join(bk.INSTAGRAM_FORBIDDEN_TERMS),
         schema="\n".join(
             '  "{}": {}'.format(key, value) for key, value in OVERHEARD_SCHEMA.items()
         ),

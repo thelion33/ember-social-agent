@@ -15,7 +15,8 @@ from ember_social.publishers import image_gen, scene_gen  # noqa: E402
 
 def _payload(**overrides):
     base = {
-        "line": "I didn't know you had it in you.",
+        "line": "The dishwasher can wait. Come here.",
+        "line_explicit": "The dishwasher can wait. Get on the counter.",
         "attribution": "her, 1:14am",
         "instagram_caption": "Some sentences do not need volume.",
         "x_caption": "Some sentences do not need volume.",
@@ -105,6 +106,31 @@ class OverheardValidation(unittest.TestCase):
             _payload(instagram_caption="A way to spice things up.")
         )
         self.assertTrue(any("spice things up" in p for p in problems))
+
+    def test_identical_lines_are_rejected(self):
+        same = "The dishwasher can wait. Come here."
+        problems = content.validate_overheard(_payload(line=same, line_explicit=same))
+        self.assertTrue(any("identical" in p for p in problems))
+
+    def test_endorsement_in_the_explicit_line_is_also_caught(self):
+        problems = content.validate_overheard(
+            _payload(line_explicit="Best thing this app ever did.")
+        )
+        self.assertTrue(any("endorsement" in p for p in problems))
+
+    def test_line_for_routes_each_network_to_its_own_variant(self):
+        copy = content.OverheardCopy(
+            line="clean",
+            line_explicit="explicit",
+            attribution="her, 1am",
+            instagram_caption="a",
+            x_caption="b",
+            alt_text="c",
+        )
+        self.assertEqual(copy.line_for("instagram"), "clean")
+        self.assertEqual(copy.line_for("x"), "explicit")
+        # Anything unrecognised must get the safe variant, never the explicit one.
+        self.assertEqual(copy.line_for("threads"), "clean")
 
     def test_explicit_term_allowed_on_x_but_not_the_image_line(self):
         self.assertEqual(

@@ -463,15 +463,20 @@ def _preview_overheard(args: argparse.Namespace) -> int:
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     out_dir = cfg.ensure_dir(cfg.OUTPUT_DIR)
-    image_path = out_dir / "{}-overheard-{}.png".format(stamp, scene.key)
     meta_path = out_dir / "{}-overheard-{}.json".format(stamp, scene.key)
 
-    image_gen.render_overheard(
-        scene_path=generated.path,
-        line=copy.line,
-        out_path=image_path,
-        attribution=copy.attribution if args.attribution else None,
-    )
+    # One composite per network: the explicit line cannot appear on the
+    # Instagram card, since Meta's policy covers language as well as imagery.
+    rendered = {}
+    for network in ("instagram", "x"):
+        path = out_dir / "{}-overheard-{}-{}.png".format(stamp, scene.key, network)
+        image_gen.render_overheard(
+            scene_path=generated.path,
+            line=copy.line_for(network),
+            out_path=path,
+            attribution=copy.attribution if args.attribution else None,
+        )
+        rendered[network] = path
 
     meta = copy.as_dict()
     meta["post_type"] = "overheard"
@@ -479,14 +484,17 @@ def _preview_overheard(args: argparse.Namespace) -> int:
     meta["scene_prompt"] = scene.prompt()
     meta["image_model"] = generated.model
     meta["refusals"] = generated.refusals
+    meta["images"] = {k: str(v) for k, v in rendered.items()}
     meta_path.write_text(json.dumps(meta, indent=2))
 
     print("")
-    print("  image     {}".format(image_path))
-    print("  scene     {}".format(generated.path))
-    print("  metadata  {}".format(meta_path))
+    print("  instagram image  {}".format(rendered["instagram"]))
+    print("  x image          {}".format(rendered["x"]))
+    print("  scene            {}".format(generated.path))
+    print("  metadata         {}".format(meta_path))
     print("")
-    print("  line      {}".format(copy.line))
+    print("  line (ig) {}".format(copy.line))
+    print("  line (x)  {}".format(copy.line_explicit))
     print("  said by   {}".format(copy.attribution))
     print("")
     print("  instagram ({} chars)".format(len(copy.instagram_caption)))

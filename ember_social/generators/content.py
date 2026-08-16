@@ -201,6 +201,7 @@ def generate_journey_anatomy(
 
 OVERHEARD_LIMITS = {
     "line": 58,
+    "line_explicit": 58,
     "attribution": 34,
     "alt_text": 200,
     "instagram_caption": bk.NETWORK_RULES["instagram"]["max_chars"],
@@ -222,6 +223,7 @@ ENDORSEMENT_PATTERNS = [
 @dataclass
 class OverheardCopy:
     line: str
+    line_explicit: str
     attribution: str
     instagram_caption: str
     x_caption: str
@@ -229,9 +231,13 @@ class OverheardCopy:
     model: str = ""
     raw: Dict[str, str] = field(default_factory=dict)
 
+    def line_for(self, network: str) -> str:
+        return self.line_explicit if network == "x" else self.line
+
     def as_dict(self) -> Dict[str, str]:
         return {
             "line": self.line,
+            "line_explicit": self.line_explicit,
             "attribution": self.attribution,
             "instagram_caption": self.instagram_caption,
             "x_caption": self.x_caption,
@@ -248,17 +254,25 @@ def validate_overheard(payload: Dict[str, str]) -> List[str]:
         instagram_fields=OVERHEARD_INSTAGRAM_FIELDS,
     )
 
-    line = payload.get("line") or ""
-    for pattern in ENDORSEMENT_PATTERNS:
-        if re.search(pattern, line, flags=re.IGNORECASE):
-            problems.append(
-                "the overheard line references the product, which reads as a "
-                "fabricated endorsement: {!r}".format(line)
-            )
-            break
+    for key in ("line", "line_explicit"):
+        line = payload.get(key) or ""
+        for pattern in ENDORSEMENT_PATTERNS:
+            if re.search(pattern, line, flags=re.IGNORECASE):
+                problems.append(
+                    "{} references the product, which reads as a fabricated "
+                    "endorsement: {!r}".format(key, line)
+                )
+                break
+        stripped = line.strip()
+        if stripped.startswith(('"', "\u201c")) or stripped.endswith(('"', "\u201d")):
+            problems.append("{} must not be wrapped in quotation marks".format(key))
 
-    if line.strip().startswith(('"', "\u201c")) or line.strip().endswith(('"', "\u201d")):
-        problems.append("the line must not be wrapped in quotation marks")
+    # Two identical lines means the explicit variant was never written, and X
+    # would silently get the sanitised version.
+    if payload.get("line") and payload.get("line") == payload.get("line_explicit"):
+        problems.append(
+            "line and line_explicit are identical; the X variant must differ"
+        )
 
     return problems
 
@@ -291,6 +305,7 @@ def generate_overheard(
 
     return OverheardCopy(
         line=payload["line"],
+        line_explicit=payload["line_explicit"],
         attribution=payload["attribution"],
         instagram_caption=payload["instagram_caption"],
         x_caption=payload["x_caption"],
