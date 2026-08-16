@@ -99,6 +99,52 @@ def check_openai(config: cfg.Config, network: bool) -> CheckResult:
     return _result("openai", OK, "{} authenticated".format(masked))
 
 
+def check_gemini(config: cfg.Config, network: bool) -> CheckResult:
+    """Scene imagery. Absent, posts fall back to OpenAI silhouettes."""
+    gemini = config.gemini
+    if not gemini.is_configured:
+        return _result(
+            "gemini",
+            WARN,
+            "GEMINI_API_KEY not set — scenes fall back to OpenAI silhouettes",
+        )
+
+    models = "{} / {}".format(gemini.instagram_model, gemini.x_model)
+    masked = _mask(gemini.api_key)
+    if not network:
+        return _result("gemini", OK, "{} {} (not probed)".format(masked, models))
+
+    try:
+        import requests
+
+        response = requests.get(
+            "{}/models".format(cfg.GEMINI_API_HOST),
+            headers={"x-goog-api-key": gemini.api_key},
+            timeout=20,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _result("gemini", FAIL, "request failed: {}".format(exc))
+    if response.status_code != 200:
+        return _result(
+            "gemini", FAIL, "HTTP {} — {}".format(response.status_code, _body(response))
+        )
+
+    available = {
+        model["name"].replace("models/", "")
+        for model in response.json().get("models", [])
+    }
+    missing = [
+        name
+        for name in (gemini.instagram_model, gemini.x_model)
+        if name not in available
+    ]
+    if missing:
+        return _result(
+            "gemini", FAIL, "key cannot reach {}".format(", ".join(missing))
+        )
+    return _result("gemini", OK, "{} {}".format(masked, models))
+
+
 def check_instagram(config: cfg.Config, network: bool) -> CheckResult:
     ig = config.instagram
     if not ig.access_token:
@@ -334,6 +380,7 @@ def command_verify(args: argparse.Namespace) -> int:
         check_timezone(config),
         check_font(),
         check_openai(config, network),
+        check_gemini(config, network),
         check_instagram(config, network),
         check_x(config, network),
         check_image_host(config, network),

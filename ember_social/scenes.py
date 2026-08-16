@@ -5,10 +5,18 @@ model free-associate would wander across the moderation boundary at
 unpredictable hours. So scenes are composed from fixed parts: the agent picks
 the pieces, the image model only renders them.
 
-Tiers exist because Instagram and X allow different things. Meta's Adult Nudity
-and Sexual Activity policy covers *implied* and digitally-created sexual
-activity, so a silhouette of an act violates it even with no skin visible. The
-embrace tier is what Instagram can carry; the charged tier is X only.
+The boundary here was measured rather than guessed. Probing Gemini with a
+ladder from clothed to explicit found that the filter does not grade skin on a
+sliding scale — underwear, sweat, and bare torsos all pass, while phrasings
+that name nudity as the subject ("fine art nude", "entirely undressed" as the
+point of the image) get refused. So the vocabulary below shows as much skin as
+the brief asks for while never making nudity the subject.
+
+Tiers exist because Instagram and X allow different things. Meta permits
+underwear and swimwear — lingerie brands live on Instagram — but prohibits
+nudity and depicted or implied sexual acts. The embrace tier stops at charged
+stillness for that reason. The charged tier adds motion and contact that reads
+as mid-act, and is X only.
 """
 
 from __future__ import annotations
@@ -28,23 +36,26 @@ NETWORK_MAX_TIER = {
 }
 
 # Held constant across every scene so the grid reads as one account rather than
-# a stock-photo dump.
+# a stock-photo dump. Sweat and skin texture live here rather than in the pose,
+# so every scene inherits them instead of relying on the pose to ask.
 STYLE_ANCHOR = (
-    "Backlit silhouette photography, warm rust and amber rim light against deep "
-    "charcoal shadow, high contrast, minimal composition, cinematic film grain, "
-    "editorial poster art, faces not identifiable, no nudity, no explicit "
-    "anatomy, no text, no watermark, no logos."
+    "Editorial fashion photograph, shot on 85mm at f/1.4, shallow depth of "
+    "field, deep shadow with warm amber highlights, cinematic colour grade, "
+    "skin sheened with sweat, damp hair stuck to skin, flushed and breathing "
+    "hard, glistening highlights along shoulders and collarbones, visible skin "
+    "texture and detail, photorealistic, no text, no watermark, no logos, "
+    "no nudity."
 )
 
 SETTINGS: List[str] = [
-    "a bedroom doorway seen from a dark hallway",
+    "a dark bedroom with an unmade bed",
     "a hotel room in front of a floor-to-ceiling window",
     "a kitchen at night, counter and cabinets behind them",
-    "a bathroom with steam on the glass behind them",
+    "a bathroom with steam fogging the glass",
     "a living room lit only by a fireplace",
     "a bedroom with city lights filling the window",
     "a narrow hallway, one of them against the wall",
-    "an unmade bed under a low window",
+    "a sunroom at dawn with sheer curtains moving",
     "a balcony at night above a lit street",
     "a stairwell landing, half in shadow",
 ]
@@ -57,40 +68,62 @@ LIGHT: List[str] = [
     "firelight flickering from below",
     "moonlight through half-open blinds",
     "light spilling through a door left ajar",
-    "a phone screen lighting them from beneath",
+    "a bathroom light left on down the hall",
 ]
 
 FRAMING: List[str] = [
-    "full-body silhouette, wide shot",
-    "tight crop on two profiles almost touching",
-    "seen from behind, over one shoulder",
-    "low angle looking up",
-    "overhead looking straight down",
-    "framed through a doorway, edges dark",
-    "reflected in a mirror at the edge of frame",
+    "Full-body wide shot",
+    "Tight crop on two faces almost touching",
+    "Shot from behind, over one bare shoulder",
+    "Low angle looking up",
+    "Overhead shot looking straight down",
+    "Framed through a doorway, edges falling into shadow",
+    "Reflected in a mirror at the edge of frame",
+    "Side profile, both figures in the same plane",
 ]
 
-# Poses per tier. Embrace is Instagram-safe: contact, tension, no act implied.
+# Nobody is fully dressed. Wardrobe is its own axis so the same pose can read
+# differently across posts, and so "how much clothing" never has to be smuggled
+# into the pose description.
+WARDROBE: Dict[str, List[str]] = {
+    TIER_EMBRACE: [
+        "she is in a black lace bra and underwear, he is in boxer briefs",
+        "she is in a short silk slip, he is bare-chested in pyjama bottoms",
+        "both are stripped to plain cotton underwear",
+        "she wears an oversized shirt open over a bralette, he is in boxers",
+        "she is in a satin camisole and briefs, he is bare-chested",
+        "both are in underwear with a sheet half wrapped around them",
+    ],
+    TIER_CHARGED: [
+        "she is in a sheer black lingerie set, he is in boxer briefs",
+        "she is in a bralette and underwear, he is bare-chested",
+        "both are in underwear, damp and clinging",
+        "she wears only his unbuttoned shirt and underwear",
+        "both are in underwear with the sheet kicked to the floor",
+    ],
+}
+
+# Poses per tier. Embrace is charged stillness: contact and tension, but no
+# motion that reads as an act in progress.
 POSES: Dict[str, List[str]] = {
     TIER_EMBRACE: [
-        "standing in a close embrace, foreheads touching",
-        "one hand cradling the other's jaw, about to kiss",
-        "arms around a waist, pulled in tight from behind",
-        "one lifted slightly off the floor, legs around a waist",
-        "pressed against a wall, one forearm braced above the other's head",
-        "lying close together under a sheet, one head on the other's chest",
-        "sitting on a counter, the other standing between their knees",
-        "a hand sliding along a bare shoulder, the other leaning in",
+        "sitting facing each other on the bed, foreheads together, catching their breath",
+        "collapsed on their backs side by side, chests rising, laughing",
+        "one lying with their head on the other's bare chest",
+        "standing in a close embrace, one hand cradling the other's jaw",
+        "sitting on the counter with the other standing between their knees",
+        "pressed together against the wall, chin lifted, about to kiss",
+        "one sitting between the other's legs, leaning back against their chest",
+        "lying face to face across the pillows, legs tangled, talking quietly",
     ],
-    # Charged is X-only: more heat, still silhouette and still no anatomy.
-    # Deliberately conservative until the boundary is probed; anything the
-    # image API refuses gets logged and the tier steps down.
+    # Charged reads as mid-act without depicting one: motion, grip, and weight.
     TIER_CHARGED: [
-        "tangled together across an unmade bed, limbs overlapping",
-        "one kneeling in front of the other, hands on their hips",
-        "one bent forward over the edge of a bed, the other close behind",
-        "straddling a lap in a low chair, arched back",
-        "pinned against a wall, one leg lifted and held",
+        "she straddles his lap on the edge of the bed, her hands on his chest",
+        "tangled across the bed, her leg hooked over his hip, mid-movement",
+        "lying back with her spine arched, one hand gripping the sheet overhead",
+        "pinned against the wall, one leg lifted and held at his waist",
+        "she is above him with her hands braced on the headboard",
+        "bent forward over the end of the bed, his hand flat on her back",
     ],
 }
 
@@ -100,23 +133,34 @@ class Scene:
     setting: str
     light: str
     framing: str
+    wardrobe: str
     pose: str
     tier: str
 
     @property
     def key(self) -> str:
         """Stable identity, so the same scene is not posted twice."""
-        raw = "|".join([self.tier, self.setting, self.light, self.framing, self.pose])
+        raw = "|".join(
+            [
+                self.tier,
+                self.setting,
+                self.light,
+                self.framing,
+                self.wardrobe,
+                self.pose,
+            ]
+        )
         return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
 
     def prompt(self) -> str:
         return (
-            "{framing} of a couple {pose}, in {setting}, lit by {light}. "
-            "{style}".format(
-                framing=self.framing[0].upper() + self.framing[1:],
+            "{framing} of an attractive couple in their thirties {pose}, in "
+            "{setting}, lit by {light}. {wardrobe}. {style}".format(
+                framing=self.framing,
                 pose=self.pose,
                 setting=self.setting,
                 light=self.light,
+                wardrobe=self.wardrobe[0].upper() + self.wardrobe[1:],
                 style=STYLE_ANCHOR,
             )
         )
@@ -128,6 +172,7 @@ class Scene:
             "setting": self.setting,
             "light": self.light,
             "framing": self.framing,
+            "wardrobe": self.wardrobe,
             "pose": self.pose,
         }
 
@@ -160,27 +205,31 @@ def compose(
     rng = random.Random(seed)
     excluded = set(exclude_keys)
 
-    for _ in range(200):
-        scene = Scene(
+    def draw() -> Scene:
+        return Scene(
             setting=rng.choice(SETTINGS),
             light=rng.choice(LIGHT),
             framing=rng.choice(FRAMING),
+            wardrobe=rng.choice(WARDROBE[tier]),
             pose=rng.choice(POSES[tier]),
             tier=tier,
         )
+
+    for _ in range(200):
+        scene = draw()
         if scene.key not in excluded:
             return scene
 
     # Every combination tried is already used. Better to repeat the oldest
     # scene than to skip the day's post entirely.
-    return Scene(
-        setting=rng.choice(SETTINGS),
-        light=rng.choice(LIGHT),
-        framing=rng.choice(FRAMING),
-        pose=rng.choice(POSES[tier]),
-        tier=tier,
-    )
+    return draw()
 
 
 def combination_count(tier: str = TIER_EMBRACE) -> int:
-    return len(SETTINGS) * len(LIGHT) * len(FRAMING) * len(POSES[tier])
+    return (
+        len(SETTINGS)
+        * len(LIGHT)
+        * len(FRAMING)
+        * len(WARDROBE[tier])
+        * len(POSES[tier])
+    )

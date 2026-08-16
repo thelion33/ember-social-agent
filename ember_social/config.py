@@ -29,6 +29,14 @@ GRAPH_API_VERSION = "v21.0"
 
 X_API_HOST = "https://api.x.com"
 
+GEMINI_API_HOST = "https://generativelanguage.googleapis.com/v1beta"
+# Pro refuses more than Flash — measured, not assumed — so the stricter model
+# draws for the account with the stricter platform policy.
+DEFAULT_GEMINI_INSTAGRAM_MODEL = "gemini-3-pro-image"
+DEFAULT_GEMINI_X_MODEL = "gemini-3.1-flash-image"
+# Native 4:5, which is Instagram's portrait frame, so nothing is cropped away.
+GEMINI_ASPECT_RATIO = "4:5"
+
 # Instagram builds media containers asynchronously; publishing before the
 # container reports FINISHED fails with error 9007.
 CONTAINER_POLL_CEILING_SECONDS = 90
@@ -139,6 +147,29 @@ class XConfig:
 
 
 @dataclass(frozen=True)
+class GeminiConfig:
+    """Scene imagery.
+
+    Google renders photoreal intimacy that OpenAI refuses outright — the same
+    afterglow prompt is blocked at input moderation by one and produced without
+    complaint by the other. Pro is the stricter of the two Gemini models and
+    Flash the more permissive, which maps cleanly onto the network split:
+    Instagram gets Pro, X gets Flash.
+    """
+
+    api_key: Optional[str]
+    instagram_model: str
+    x_model: str
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.api_key)
+
+    def model_for_tier(self, tier: str) -> str:
+        return self.x_model if tier == "charged" else self.instagram_model
+
+
+@dataclass(frozen=True)
 class ImageHostConfig:
     token: Optional[str]
     repo: Optional[str]
@@ -152,6 +183,7 @@ class ImageHostConfig:
 @dataclass(frozen=True)
 class Config:
     openai_api_key: Optional[str]
+    gemini: GeminiConfig
     instagram: InstagramConfig
     x: XConfig
     image_host: ImageHostConfig
@@ -161,6 +193,12 @@ class Config:
     def from_env(cls) -> "Config":
         return cls(
             openai_api_key=_env("OPENAI_API_KEY"),
+            gemini=GeminiConfig(
+                api_key=_env("GEMINI_API_KEY"),
+                instagram_model=_env("GEMINI_IMAGE_MODEL")
+                or DEFAULT_GEMINI_INSTAGRAM_MODEL,
+                x_model=_env("GEMINI_IMAGE_MODEL_X") or DEFAULT_GEMINI_X_MODEL,
+            ),
             instagram=InstagramConfig(
                 access_token=_env("INSTAGRAM_ACCESS_TOKEN"),
                 user_id=_env("INSTAGRAM_USER_ID"),
