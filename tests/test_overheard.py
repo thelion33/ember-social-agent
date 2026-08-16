@@ -115,9 +115,13 @@ def _png_bytes():
 class ProviderChain(unittest.TestCase):
     """Gemini renders what OpenAI refuses, so it leads; OpenAI is the net."""
 
-    def _chain(self, provider=scene_gen.PROVIDER_GEMINI, tier=scenes.TIER_EMBRACE,
-               gemini_key="test-key"):
-        env = {"GEMINI_API_KEY": gemini_key} if gemini_key else {}
+    def _chain(self, provider=scene_gen.PROVIDER_AUTO, tier=scenes.TIER_EMBRACE,
+               gemini_key="test-key", bfl_key=None):
+        env = {}
+        if gemini_key:
+            env["GEMINI_API_KEY"] = gemini_key
+        if bfl_key:
+            env["BFL_API_KEY"] = bfl_key
         with mock.patch.dict(os.environ, env, clear=True):
             return [
                 (name, model)
@@ -130,6 +134,27 @@ class ProviderChain(unittest.TestCase):
             [name for name, _ in chain],
             [scene_gen.PROVIDER_GEMINI, scene_gen.PROVIDER_OPENAI],
         )
+
+    def test_bfl_outranks_gemini_when_configured(self):
+        """Ordered by permission granted, not by output quality."""
+        chain = self._chain(bfl_key="test-bfl")
+        self.assertEqual(
+            [name for name, _ in chain],
+            [
+                scene_gen.PROVIDER_BFL,
+                scene_gen.PROVIDER_GEMINI,
+                scene_gen.PROVIDER_OPENAI,
+            ],
+        )
+
+    def test_requesting_one_provider_measures_only_that_provider(self):
+        """A probe must not silently fall through to a different backend."""
+        chain = self._chain(provider=scene_gen.PROVIDER_BFL, bfl_key="test-bfl")
+        self.assertEqual([name for name, _ in chain], [scene_gen.PROVIDER_BFL])
+
+    def test_requesting_an_unconfigured_provider_fails_loudly(self):
+        with self.assertRaises(RuntimeError):
+            self._chain(provider=scene_gen.PROVIDER_BFL, bfl_key=None)
 
     def test_instagram_draws_from_the_stricter_model(self):
         """Pro refuses more than Flash, so it draws for the stricter platform."""
@@ -147,6 +172,14 @@ class ProviderChain(unittest.TestCase):
     def test_openai_can_be_forced(self):
         chain = self._chain(provider=scene_gen.PROVIDER_OPENAI)
         self.assertEqual([name for name, _ in chain], [scene_gen.PROVIDER_OPENAI])
+
+    def test_bfl_moderation_statuses_read_as_refusals(self):
+        for status in ("Request Moderated", "Content Moderated"):
+            self.assertTrue(
+                scene_gen._is_moderation_refusal(
+                    scene_gen.ModerationRefusal("bfl {}: ['Sexual Content']".format(status))
+                )
+            )
 
     def test_a_withheld_image_reads_as_a_refusal_not_a_crash(self):
         for reason in ("PROHIBITED_CONTENT", "IMAGE_SAFETY"):

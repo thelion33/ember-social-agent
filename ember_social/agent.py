@@ -99,6 +99,41 @@ def check_openai(config: cfg.Config, network: bool) -> CheckResult:
     return _result("openai", OK, "{} authenticated".format(masked))
 
 
+def check_bfl(config: cfg.Config, network: bool) -> CheckResult:
+    """Preferred image provider on policy grounds; optional until configured."""
+    bfl = config.bfl
+    if not bfl.is_configured:
+        return _result(
+            "bfl",
+            WARN,
+            "BFL_API_KEY not set — falling back to Gemini, whose policy "
+            "prohibits this content even though its filter permits it",
+        )
+    detail = "{} {} @ safety_tolerance {}".format(
+        _mask(bfl.api_key), bfl.model, bfl.safety_tolerance
+    )
+    if not network:
+        return _result("bfl", OK, "{} (not probed)".format(detail))
+
+    try:
+        import requests
+
+        response = requests.get(
+            "{}/get_result".format(cfg.BFL_API_HOST),
+            headers={"x-key": bfl.api_key},
+            params={"id": "credential-probe"},
+            timeout=20,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _result("bfl", FAIL, "request failed: {}".format(exc))
+
+    # A bogus job id is expected to 404; what matters is that the key was not
+    # rejected outright.
+    if response.status_code in (401, 403):
+        return _result("bfl", FAIL, "key rejected (HTTP {})".format(response.status_code))
+    return _result("bfl", OK, detail)
+
+
 def check_gemini(config: cfg.Config, network: bool) -> CheckResult:
     """Scene imagery. Absent, posts fall back to OpenAI silhouettes."""
     gemini = config.gemini
@@ -380,6 +415,7 @@ def command_verify(args: argparse.Namespace) -> int:
         check_timezone(config),
         check_font(),
         check_openai(config, network),
+        check_bfl(config, network),
         check_gemini(config, network),
         check_instagram(config, network),
         check_x(config, network),

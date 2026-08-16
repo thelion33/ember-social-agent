@@ -23,8 +23,11 @@ from typing import Callable, List, Optional, Sequence, Tuple
 from .. import config as cfg
 from .. import scenes as scene_lib
 
+PROVIDER_AUTO = "auto"
+PROVIDER_BFL = "bfl"
 PROVIDER_GEMINI = "gemini"
 PROVIDER_OPENAI = "openai"
+PROVIDERS = (PROVIDER_AUTO, PROVIDER_BFL, PROVIDER_GEMINI, PROVIDER_OPENAI)
 
 OPENAI_MODEL = "gpt-image-2"
 OPENAI_SIZE = "1024x1536"
@@ -84,6 +87,81 @@ def _refusal_detail(exc: Exception) -> str:
 
 
 # --- providers ------------------------------------------------------------
+
+
+def _generate_bfl(prompt: str, model: str) -> bytes:
+    """Black Forest Labs. Submits a job, then polls for the image.
+
+    Moderation surfaces as a terminal status rather than an HTTP error, and it
+    distinguishes the input stage from the output stage — both are refusals,
+    not faults, and neither should be retried against the same composition.
+    """
+    import time
+
+    import requests
+
+    config = cfg.get_config()
+    if not config.bfl.is_configured:
+        raise RuntimeError("BFL_API_KEY is not set")
+
+    headers = {"x-key": config.bfl.api_key, "Content-Type": "application/json"}
+    response = requests.post(
+        "{}/{}".format(cfg.BFL_API_HOST, model),
+        headers=headers,
+        json={
+            "prompt": prompt,
+            "aspect_ratio": cfg.BFL_ASPECT_RATIO,
+            "safety_tolerance": config.bfl.safety_tolerance,
+            # Less post-processed output, which suits editorial photography
+            # better than the default look.
+            "raw": True,
+            "output_format": "png",
+        },
+        timeout=60,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(
+            "bfl {}: {}".format(response.status_code, response.text[:200])
+        )
+
+    job = response.json()
+    polling_url = job.get("polling_url")
+    if not polling_url:
+        raise RuntimeError("bfl returned no polling_url: {}".format(str(job)[:200]))
+
+    deadline = time.time() + cfg.BFL_POLL_CEILING_SECONDS
+    while time.time() < deadline:
+        poll = requests.get(
+            polling_url, headers={"x-key": config.bfl.api_key}, timeout=30
+        )
+        if poll.status_code != 200:
+            raise RuntimeError("bfl poll {}: {}".format(poll.status_code, poll.text[:150]))
+
+        payload = poll.json()
+        status = payload.get("status", "")
+
+        if status == "Ready":
+            sample = (payload.get("result") or {}).get("sample")
+            if not sample:
+                raise RuntimeError("bfl reported Ready with no image")
+            return requests.get(sample, timeout=90).content
+
+        if status in ("Request Moderated", "Content Moderated"):
+            reasons = (payload.get("result") or {}).get("moderation_reasons") or (
+                payload.get("details") or {}
+            ).get("Moderation Reasons")
+            raise ModerationRefusal(
+                "bfl {}: {}".format(status, reasons or "no reason given")
+            )
+
+        if status in ("Error", "Task not found"):
+            raise RuntimeError("bfl {}: {}".format(status, str(payload)[:150]))
+
+        time.sleep(cfg.BFL_POLL_INTERVAL)
+
+    raise RuntimeError(
+        "bfl did not finish within {}s".format(cfg.BFL_POLL_CEILING_SECONDS)
+    )
 
 
 def _generate_gemini(prompt: str, model: str) -> bytes:
@@ -158,20 +236,47 @@ def _generate_openai(prompt: str, model: str) -> bytes:
 def _provider_chain(
     provider: str, tier: str
 ) -> List[Tuple[str, str, Callable[[str, str], bytes]]]:
-    """(provider, model, callable) in the order they should be attempted."""
-    config = cfg.get_config()
-    gemini = (
-        PROVIDER_GEMINI,
-        config.gemini.model_for_tier(tier),
-        _generate_gemini,
-    )
-    openai = (PROVIDER_OPENAI, OPENAI_MODEL, _generate_openai)
+    """(provider, model, callable) in the order they should be attempted.
 
-    if provider == PROVIDER_OPENAI:
-        return [openai]
-    if not config.gemini.is_configured:
-        return [openai]
-    return [gemini, openai]
+    Ordered by how much permission each provider actually grants, not by output
+    quality. BFL's policy does not prohibit this subject matter; Google's does
+    and simply fails to enforce it; OpenAI refuses it outright and can only
+    contribute silhouettes. So BFL leads when configured, and the chain
+    degrades through tolerance to refusal.
+    """
+    config = cfg.get_config()
+
+    available = {
+        PROVIDER_BFL: (
+            (PROVIDER_BFL, config.bfl.model, _generate_bfl)
+            if config.bfl.is_configured
+            else None
+        ),
+        PROVIDER_GEMINI: (
+            (PROVIDER_GEMINI, config.gemini.model_for_tier(tier), _generate_gemini)
+            if config.gemini.is_configured
+            else None
+        ),
+        PROVIDER_OPENAI: (PROVIDER_OPENAI, OPENAI_MODEL, _generate_openai),
+    }
+
+    # An explicitly requested provider is used alone, so a probe measures that
+    # provider rather than whatever the chain silently fell through to.
+    if provider in available:
+        chosen = available[provider]
+        if chosen is not None:
+            return [chosen]
+        raise RuntimeError("provider {!r} is not configured".format(provider))
+
+    return [
+        entry
+        for entry in (
+            available[PROVIDER_BFL],
+            available[PROVIDER_GEMINI],
+            available[PROVIDER_OPENAI],
+        )
+        if entry is not None
+    ]
 
 
 # --- orchestration --------------------------------------------------------
@@ -182,7 +287,7 @@ def generate_scene(
     seed: Optional[int] = None,
     exclude_keys: Sequence[str] = (),
     out_dir: Optional[Path] = None,
-    provider: str = PROVIDER_GEMINI,
+    provider: str = PROVIDER_AUTO,
 ) -> GeneratedScene:
     out_dir = cfg.ensure_dir(out_dir or (cfg.OUTPUT_DIR / "scenes"))
 

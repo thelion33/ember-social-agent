@@ -29,6 +29,17 @@ GRAPH_API_VERSION = "v21.0"
 
 X_API_HOST = "https://api.x.com"
 
+BFL_API_HOST = "https://api.bfl.ai/v1"
+# FLUX1.1 [pro] ultra. safety_tolerance runs 0-6 on FLUX.1 endpoints, where 6
+# is the most permissive; FLUX.2 caps at 5, which is why this generation is
+# preferred despite being older.
+DEFAULT_BFL_MODEL = "flux-pro-1.1-ultra"
+BFL_SAFETY_TOLERANCE = 6
+BFL_ASPECT_RATIO = "2:3"
+# Async: the POST returns a job, and the image arrives by polling.
+BFL_POLL_CEILING_SECONDS = 120
+BFL_POLL_INTERVAL = 1.5
+
 GEMINI_API_HOST = "https://generativelanguage.googleapis.com/v1beta"
 # Pro refuses more than Flash — measured, not assumed — so the stricter model
 # draws for the account with the stricter platform policy.
@@ -59,6 +70,16 @@ def _env(name: str) -> Optional[str]:
         return None
     value = value.strip()
     return value or None
+
+
+def _int_env(name: str, default: int) -> int:
+    raw = _env(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
 
 
 def load_dotenv_if_present() -> bool:
@@ -147,6 +168,27 @@ class XConfig:
 
 
 @dataclass(frozen=True)
+class BflConfig:
+    """Black Forest Labs.
+
+    Preferred over Gemini on policy rather than on output: BFL's usage policy
+    carries no blanket prohibition on sexual content — only real people without
+    consent and unlawful material — whereas Google's prohibits the category
+    outright and merely fails to enforce it. Depending on a provider that
+    forbids what the pipeline does every night is how a key gets revoked with
+    no warning and no appeal.
+    """
+
+    api_key: Optional[str]
+    model: str
+    safety_tolerance: int
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.api_key)
+
+
+@dataclass(frozen=True)
 class GeminiConfig:
     """Scene imagery.
 
@@ -183,6 +225,7 @@ class ImageHostConfig:
 @dataclass(frozen=True)
 class Config:
     openai_api_key: Optional[str]
+    bfl: BflConfig
     gemini: GeminiConfig
     instagram: InstagramConfig
     x: XConfig
@@ -193,6 +236,13 @@ class Config:
     def from_env(cls) -> "Config":
         return cls(
             openai_api_key=_env("OPENAI_API_KEY"),
+            bfl=BflConfig(
+                api_key=_env("BFL_API_KEY"),
+                model=_env("BFL_MODEL") or DEFAULT_BFL_MODEL,
+                safety_tolerance=_int_env(
+                    "BFL_SAFETY_TOLERANCE", BFL_SAFETY_TOLERANCE
+                ),
+            ),
             gemini=GeminiConfig(
                 api_key=_env("GEMINI_API_KEY"),
                 instagram_model=_env("GEMINI_IMAGE_MODEL")
