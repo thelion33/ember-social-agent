@@ -17,14 +17,14 @@
     {
       "key": "2026-08-16|19:00|overheard",
       "networks": {
-        "generated": {
-          "instagram": "/home/runner/work/ember-social-agent/ember-social-agent/out/449ae8f557c7-instagram.png",
-          "x": "/home/runner/work/ember-social-agent/ember-social-agent/out/449ae8f557c7-x.png"
+        "instagram": {
+          "media_id": "17973232304917784",
+          "permalink": "https://www.instagram.com/p/DcHpxs7llSp/"
         }
       },
-      "note": "dry run",
-      "posted_at": "2026-08-16T23:32:24+00:00",
-      "scene_key": "449ae8f557c7",
+      "note": "first real post, manually approved; supersedes the runner's unpublished dry run of scene 449ae8f557c7 for the same slot",
+      "posted_at": "2026-08-16T23:33:52+00:00",
+      "scene_key": "12955be6aac8",
       "type": "overheard"
     }
   ],
