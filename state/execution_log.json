@@ -13,6 +13,19 @@
       "note": "noop smoke test",
       "posted_at": "2026-08-16T23:04:03+00:00",
       "type": "noop"
+    },
+    {
+      "key": "2026-08-16|19:00|overheard",
+      "networks": {
+        "generated": {
+          "instagram": "/home/runner/work/ember-social-agent/ember-social-agent/out/449ae8f557c7-instagram.png",
+          "x": "/home/runner/work/ember-social-agent/ember-social-agent/out/449ae8f557c7-x.png"
+        }
+      },
+      "note": "dry run",
+      "posted_at": "2026-08-16T23:32:24+00:00",
+      "scene_key": "449ae8f557c7",
+      "type": "overheard"
     }
   ],
   "version": 1
