@@ -11,6 +11,7 @@ import argparse
 import io
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, List, Optional
 
 from . import config as cfg
@@ -720,6 +721,46 @@ def _smoke_entry(timezone_name: str, log) -> list:
     return [entry]
 
 
+def command_refresh_token(args: argparse.Namespace) -> int:
+    """Refresh the Instagram token before it dies silently at 60 days."""
+    from .publishers import token_refresh
+    from .state import TokenState
+
+    cfg.load_dotenv_if_present()
+    config = cfg.get_config()
+    state = TokenState.load()
+
+    print("Instagram token refresh")
+    print("  flavor    {}".format(config.instagram.flavor))
+    days = state.days_since_refresh("instagram")
+    print(
+        "  last      {}".format(
+            "unknown" if days is None else "{:.0f} days ago".format(days)
+        )
+    )
+    print("  persist   {}".format("gh secret set" if args.persist else "local only"))
+    print("")
+
+    try:
+        outcome = token_refresh.refresh_if_due(
+            config=config, state=state, persist=args.persist, force=args.force
+        )
+    except token_refresh.RefreshError as exc:
+        print("  FAILED: {}".format(exc))
+        return 1
+
+    print("  {}".format(outcome.detail))
+    if outcome.refreshed:
+        if outcome.persisted_to:
+            print("  persisted to {}".format(outcome.persisted_to))
+        else:
+            print(
+                "  NOT persisted. The new token exists but nothing stored it, "
+                "so the next run still uses the old one. Re-run with --persist."
+            )
+    return 0
+
+
 def command_plan(args: argparse.Namespace) -> int:
     """Show what the calendar will do next, and whether it is about to run out."""
     from datetime import date, datetime, timedelta
@@ -841,10 +882,68 @@ def _run_overheard(args: argparse.Namespace, log) -> dict:
             "networks": {"generated": rendered},
         }
 
-    raise NotImplementedError(
-        "publishing is not wired up yet — Instagram and X publishers arrive "
-        "with the credentials"
+    networks = _publish_everywhere(
+        rendered=rendered,
+        copy=copy,
+        scene_key=scene.key,
     )
+    return {"scene_key": scene.key, "networks": networks}
+
+
+def _publish_everywhere(rendered: dict, copy, scene_key: str) -> dict:
+    """Publish to every configured network. One failing must not skip the rest."""
+    from .publishers import image_host, instagram
+
+    config = cfg.get_config()
+    networks: dict = {}
+
+    if config.instagram.is_configured:
+        try:
+            url = image_host.upload(
+                Path(rendered["instagram"]),
+                name="{}-instagram.png".format(scene_key),
+            )
+            print("  hosted at {}".format(url))
+
+            # Meta fetches this anonymously, so a private repo fails here with
+            # a clear 404 instead of an opaque Instagram error later.
+            if not image_host.is_publicly_reachable(url):
+                raise image_host.HostingError(
+                    "{} is not reachable without credentials — the assets repo "
+                    "must be public".format(url)
+                )
+
+            publisher = instagram.InstagramPublisher.from_config(config)
+            result = publisher.publish(
+                image_url=url,
+                caption=copy.instagram_caption,
+                alt_text=copy.alt_text,
+            )
+            print(
+                "  instagram published {} after {} poll(s), {:.0f}s".format(
+                    result.media_id, result.polls, result.waited_seconds
+                )
+            )
+            if result.permalink:
+                print("  {}".format(result.permalink))
+            networks["instagram"] = {
+                "media_id": result.media_id,
+                "permalink": result.permalink,
+                "image_url": url,
+            }
+        except Exception as exc:  # noqa: BLE001
+            print("  instagram FAILED: {}".format(exc))
+            networks["instagram"] = {"error": str(exc)[:300]}
+    else:
+        print("  instagram skipped — not configured")
+
+    if config.x.is_configured:
+        print("  x publisher not written yet — skipped")
+        networks["x"] = {"skipped": "publisher not implemented"}
+    else:
+        print("  x skipped — not configured")
+
+    return networks
 
 
 def _not_yet(step: str) -> Callable[[argparse.Namespace], int]:
@@ -902,6 +1001,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="ignore the calendar and run one noop, to exercise the loop",
     )
     auto.set_defaults(func=command_auto)
+
+    refresh = subparsers.add_parser(
+        "refresh-token", help="refresh the Instagram token before it expires"
+    )
+    refresh.add_argument(
+        "--persist",
+        action="store_true",
+        help="store the new token with gh secret set. Required in CI — writing "
+        "to .env on an ephemeral runner does nothing.",
+    )
+    refresh.add_argument(
+        "--force", action="store_true", help="refresh even if not yet due"
+    )
+    refresh.set_defaults(func=command_refresh_token)
 
     plan = subparsers.add_parser("plan", help="show upcoming scheduled posts")
     plan.add_argument("--days", type=int, default=14, help="how far ahead to look")
